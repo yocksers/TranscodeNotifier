@@ -32,7 +32,10 @@ Configure the plugin under **Dashboard > Plugins > Transcode Notifier**. All cha
 
 | Setting              | Description                                                       | Default                                  |
 | -------------------- | ----------------------------------------------------------------- | ---------------------------------------- |
-| **Message Text**     | Text shown in the toast notification when transcoding starts.     | "This video is being transcoded."       |
+| **Message Text**     | Text shown in the toast notification when transcoding starts.     | "This video is being transcoded."        |
 | **Max Notifications**| Maximum notifications per video playback.                         | `1`                                      |
-| **Excluded User Names** | Comma-separated list of usernames to exclude from notifications. | *(empty)*                                |
+| **Excluded User Names** | Comma-separated list of usernames to exclude from notifications. | *(empty)*                              |
 
+---
+
+If you like the plugin and want to [Buy me a coffee](https://www.paypal.com/donate/?hosted_button_id=KEXBXYM4KFPE8)
