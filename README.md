@@ -38,4 +38,8 @@ Configure the plugin under **Dashboard > Plugins > Transcode Notifier**. All cha
 
 ---
 
+**Do with it what you will, change it in any way you want but keep it open source!**
+
+---
+
 If you like the plugin and want to [Buy me a coffee](https://www.paypal.com/donate/?hosted_button_id=KEXBXYM4KFPE8)
