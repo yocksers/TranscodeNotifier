@@ -11,28 +11,20 @@ namespace TranscodeNotifier
 {
     public static class TranscodeMonitor
     {
-        private const int DefaultMessageDurationMs = 5000;
-
         private static ISessionManager _sessionManager;
-        private static PluginConfiguration _config;
         private static bool _isRunning;
 
-        private static readonly ConcurrentDictionary<string, int> _notificationCounts = new ConcurrentDictionary<string, int>();
-        private static readonly ConcurrentDictionary<string, string> _lastVideoIdPerSession = new ConcurrentDictionary<string, string>();
+        // Tracks which sessions are currently sending notifications
+        private static readonly ConcurrentDictionary<string, bool> _hasNotified = new ConcurrentDictionary<string, bool>();
 
-        public static void Start(ISessionManager sessionManager, PluginConfiguration config)
+        public static void Start(ISessionManager sessionManager)
         {
             if (_isRunning)
                 return;
 
             _sessionManager = sessionManager;
-            _config = config;
-
-            // Subscribe to PlaybackProgress, not PlaybackStart
-            _sessionManager.PlaybackProgress += OnPlaybackProgress;
-
-            _notificationCounts.Clear();
-            _lastVideoIdPerSession.Clear();
+            _sessionManager.PlaybackStart += OnPlaybackStart;
+            _hasNotified.Clear();
 
             _isRunning = true;
         }
@@ -42,27 +34,23 @@ namespace TranscodeNotifier
             if (!_isRunning)
                 return;
 
-            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
-
-            _notificationCounts.Clear();
-            _lastVideoIdPerSession.Clear();
+            _sessionManager.PlaybackStart -= OnPlaybackStart;
+            _hasNotified.Clear();
 
             _isRunning = false;
         }
 
-        private static async void OnPlaybackProgress(object sender, PlaybackProgressEventArgs e)
+        private static async void OnPlaybackStart(object sender, PlaybackProgressEventArgs e)
         {
             try
             {
+                var config = Plugin.Instance.CurrentConfiguration;
                 var session = e.Session;
+
                 if (session == null || session.TranscodingInfo == null)
                     return; // Not transcoding
 
-                // Only notify near the start of playback (e.g., position < 5 seconds)
-                if (e.PlaybackPositionTicks > TimeSpan.FromSeconds(5).Ticks)
-                    return;
-
-                var excludedUsers = (_config.ExcludedUserNames ?? string.Empty)
+                var excludedUsers = (config.ExcludedUserNames ?? string.Empty)
                     .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
                     .Select(u => u.Trim())
                     .Where(u => !string.IsNullOrEmpty(u))
@@ -71,36 +59,41 @@ namespace TranscodeNotifier
                 if (excludedUsers.Contains(session.UserName))
                     return;
 
-                string currentVideoId = session.NowPlayingItem?.Id ?? string.Empty;
-
-                if (!_lastVideoIdPerSession.TryGetValue(session.Id, out var lastVideoId) || lastVideoId != currentVideoId)
-                {
-                    _notificationCounts[session.Id] = 0;
-                    _lastVideoIdPerSession[session.Id] = currentVideoId;
-                }
-
-                _notificationCounts.TryGetValue(session.Id, out int sentCount);
-                if (sentCount >= _config.MaxNotifications)
+                // Prevent overlapping notifications for the same session
+                if (_hasNotified.ContainsKey(session.Id))
                     return;
 
-                var message = new MessageCommand
+                _hasNotified[session.Id] = true;
+
+                await Task.Delay(config.InitialDelaySeconds * 1000).ConfigureAwait(false);
+
+                for (int i = 0; i < config.MaxNotifications; i++)
                 {
-                    Header = "Transcoding Detected",
-                    Text = _config.MessageText,
-                    TimeoutMs = DefaultMessageDurationMs
-                };
+                    var message = new MessageCommand
+                    {
+                        Header = "Transcoding Detected",
+                        Text = config.MessageText,
+                        TimeoutMs = 5000
+                    };
 
-                await _sessionManager.SendMessageCommand(
-                    session.Id,
-                    session.Id,
-                    message,
-                    CancellationToken.None).ConfigureAwait(false);
+                    await _sessionManager.SendMessageCommand(
+                        session.Id,
+                        session.Id,
+                        message,
+                        CancellationToken.None).ConfigureAwait(false);
 
-                _notificationCounts.AddOrUpdate(session.Id, 1, (_, old) => old + 1);
+                    if (i < config.MaxNotifications - 1)
+                    {
+                        await Task.Delay(config.DelayBetweenMessagesSeconds * 1000).ConfigureAwait(false);
+                    }
+                }
+
+                // Allow future messages again after completion
+                _hasNotified.TryRemove(session.Id, out _);
             }
             catch
             {
-                // Optionally log errors here or ignore
+                // Optional: add logging here
             }
         }
     }

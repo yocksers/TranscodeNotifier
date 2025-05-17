@@ -18,5 +18,13 @@ namespace TranscodeNotifier
         [DisplayName("Users to not be notified, separate names with comma, forexample Bob, Charlie, Michael.")]
         [Description("Comma-separated list of usernames that should NOT receive the message.")]
         public string ExcludedUserNames { get; set; } = string.Empty;
+
+        [DisplayName("Initial Delay (seconds)")]
+        [Description("How many seconds to wait after playback starts before showing the first toast.")]
+        public int InitialDelaySeconds { get; set; } = 2;
+
+        [DisplayName("Delay Between Messages (seconds)")]
+        [Description("How many seconds to wait between showing each toast.")]
+        public int DelayBetweenMessagesSeconds { get; set; } = 5;
     }
 }
