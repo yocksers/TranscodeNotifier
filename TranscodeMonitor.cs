@@ -1,99 +1,78 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Session;
-using Timer = System.Timers.Timer;
 
 namespace TranscodeNotifier
 {
     public static class TranscodeMonitor
     {
-        private static Timer _timer;
-        private const int TimerIntervalMs = 5000;
         private const int DefaultMessageDurationMs = 5000;
 
-        // Track notification counts per session per video playback
-        private static readonly ConcurrentDictionary<string, int> _notificationCounts = new ConcurrentDictionary<string, int>();
+        private static ISessionManager _sessionManager;
+        private static PluginConfiguration _config;
+        private static bool _isRunning;
 
-        // Track last video ID per session to detect new playback starts
+        private static readonly ConcurrentDictionary<string, int> _notificationCounts = new ConcurrentDictionary<string, int>();
         private static readonly ConcurrentDictionary<string, string> _lastVideoIdPerSession = new ConcurrentDictionary<string, string>();
 
-        public static void Start()
+        public static void Start(ISessionManager sessionManager, PluginConfiguration config)
         {
-            if (_timer != null)
+            if (_isRunning)
                 return;
 
-            _timer = new Timer(TimerIntervalMs);
-            _timer.Elapsed += async (_, __) => await CheckSessions().ConfigureAwait(false);
-            _timer.AutoReset = true;
-            _timer.Start();
+            _sessionManager = sessionManager;
+            _config = config;
+
+            // Subscribe to PlaybackProgress, not PlaybackStart
+            _sessionManager.PlaybackProgress += OnPlaybackProgress;
 
             _notificationCounts.Clear();
             _lastVideoIdPerSession.Clear();
+
+            _isRunning = true;
         }
 
         public static void Stop()
         {
-            if (_timer == null)
+            if (!_isRunning)
                 return;
 
-            _timer.Stop();
-            _timer.Dispose();
-            _timer = null;
+            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
 
             _notificationCounts.Clear();
             _lastVideoIdPerSession.Clear();
+
+            _isRunning = false;
         }
 
-        private static async Task CheckSessions()
+        private static async void OnPlaybackProgress(object sender, PlaybackProgressEventArgs e)
         {
-            var pluginInstance = Plugin.Instance;
-            if (pluginInstance == null)
-                return;
-
-            var sessionManager = pluginInstance.SessionManager;
-            var config = pluginInstance.CurrentConfiguration;
-
-            if (sessionManager == null || config == null)
-                return;
-
-            var allSessions = sessionManager.Sessions;
-            if (allSessions == null || !allSessions.Any())
-                return;
-
-            // Cache excluded usernames once per check to reduce allocations
-            var excludedUsers = (config.ExcludedUserNames ?? string.Empty)
-                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(u => u.Trim())
-                .Where(u => !string.IsNullOrEmpty(u))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            // Filter sessions early to reduce work
-            var filteredSessions = allSessions.Where(s =>
-                s.NowPlayingItem != null &&
-                s.PlayState?.IsPaused == false &&
-                !excludedUsers.Contains(s.UserName)
-            ).ToList();
-
-            if (!filteredSessions.Any())
-                return;
-
-            // Track currently active session IDs that are transcoding
-            var activeTranscodingSessionIds = new ConcurrentBag<string>();
-
-            foreach (var session in filteredSessions)
+            try
             {
-                if (session.TranscodingInfo == null)
-                    continue; // Not transcoding
+                var session = e.Session;
+                if (session == null || session.TranscodingInfo == null)
+                    return; // Not transcoding
 
-                activeTranscodingSessionIds.Add(session.Id);
+                // Only notify near the start of playback (e.g., position < 5 seconds)
+                if (e.PlaybackPositionTicks > TimeSpan.FromSeconds(5).Ticks)
+                    return;
+
+                var excludedUsers = (_config.ExcludedUserNames ?? string.Empty)
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(u => u.Trim())
+                    .Where(u => !string.IsNullOrEmpty(u))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                if (excludedUsers.Contains(session.UserName))
+                    return;
 
                 string currentVideoId = session.NowPlayingItem?.Id ?? string.Empty;
 
-                // Reset notification count if new video started or first time tracking this session
                 if (!_lastVideoIdPerSession.TryGetValue(session.Id, out var lastVideoId) || lastVideoId != currentVideoId)
                 {
                     _notificationCounts[session.Id] = 0;
@@ -101,39 +80,27 @@ namespace TranscodeNotifier
                 }
 
                 _notificationCounts.TryGetValue(session.Id, out int sentCount);
-                if (sentCount >= config.MaxNotifications)
-                    continue;
+                if (sentCount >= _config.MaxNotifications)
+                    return;
 
                 var message = new MessageCommand
                 {
                     Header = "Transcoding Detected",
-                    Text = config.MessageText,
+                    Text = _config.MessageText,
                     TimeoutMs = DefaultMessageDurationMs
                 };
 
-                try
-                {
-                    await sessionManager.SendMessageCommand(
-                        session.Id,
-                        session.Id,
-                        message,
-                        CancellationToken.None).ConfigureAwait(false);
+                await _sessionManager.SendMessageCommand(
+                    session.Id,
+                    session.Id,
+                    message,
+                    CancellationToken.None).ConfigureAwait(false);
 
-                    _notificationCounts.AddOrUpdate(session.Id, 1, (_, old) => old + 1);
-                }
-                catch
-                {
-                    // Optionally log errors here
-                }
+                _notificationCounts.AddOrUpdate(session.Id, 1, (_, old) => old + 1);
             }
-
-            // Remove sessions that no longer are transcoding or have ended playback
-            var activeIdsSet = activeTranscodingSessionIds.ToHashSet();
-
-            foreach (var key in _notificationCounts.Keys.Except(activeIdsSet).ToList())
+            catch
             {
-                _notificationCounts.TryRemove(key, out _);
-                _lastVideoIdPerSession.TryRemove(key, out _);
+                // Optionally log errors here or ignore
             }
         }
     }
