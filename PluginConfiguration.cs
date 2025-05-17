@@ -1,10 +1,13 @@
-using Emby.Web.GenericEdit;
+﻿using Emby.Web.GenericEdit;
 using System.ComponentModel;
 
 namespace TranscodeNotifier
 {
     public class PluginConfiguration : EditableOptionsBase
     {
+        public override string EditorDescription =>
+            "<h2 style='color:red; font-weight:bold;'>⚠️ Not all clients support these messages!</h2><br/>";
+
         public override string EditorTitle => "Transcode Notifier Configuration";
 
         [DisplayName("Message Text")]
@@ -26,5 +29,9 @@ namespace TranscodeNotifier
         [DisplayName("Delay Between Messages (seconds)")]
         [Description("How many seconds to wait between showing each toast.")]
         public int DelayBetweenMessagesSeconds { get; set; } = 5;
+
+        [DisplayName("Enable Confirmation Button")]
+        [Description("If enabled, notification requires manual dismissal (no timeout).")]
+        public bool EnableConfirmationButton { get; set; } = false;
     }
 }

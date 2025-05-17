@@ -14,7 +14,6 @@ namespace TranscodeNotifier
         private static ISessionManager _sessionManager;
         private static bool _isRunning;
 
-        // Tracks which sessions are currently sending notifications
         private static readonly ConcurrentDictionary<string, bool> _hasNotified = new ConcurrentDictionary<string, bool>();
 
         public static void Start(ISessionManager sessionManager)
@@ -59,7 +58,6 @@ namespace TranscodeNotifier
                 if (excludedUsers.Contains(session.UserName))
                     return;
 
-                // Prevent overlapping notifications for the same session
                 if (_hasNotified.ContainsKey(session.Id))
                     return;
 
@@ -67,28 +65,30 @@ namespace TranscodeNotifier
 
                 await Task.Delay(config.InitialDelaySeconds * 1000).ConfigureAwait(false);
 
-                for (int i = 0; i < config.MaxNotifications; i++)
+                int maxNotifications = config.EnableConfirmationButton ? 1 : config.MaxNotifications;
+                int delayBetweenMessages = config.EnableConfirmationButton ? 0 : config.DelayBetweenMessagesSeconds;
+
+                for (int i = 0; i < maxNotifications; i++)
                 {
                     var message = new MessageCommand
                     {
-                        Header = "Transcoding Detected",
+                        Header = "Transcode Warning",
                         Text = config.MessageText,
-                        TimeoutMs = 5000
+                        TimeoutMs = config.EnableConfirmationButton ? (int?)null : 5000
                     };
 
                     await _sessionManager.SendMessageCommand(
-                        session.Id,
+                        null,
                         session.Id,
                         message,
                         CancellationToken.None).ConfigureAwait(false);
 
-                    if (i < config.MaxNotifications - 1)
+                    if (i < maxNotifications - 1 && delayBetweenMessages > 0)
                     {
-                        await Task.Delay(config.DelayBetweenMessagesSeconds * 1000).ConfigureAwait(false);
+                        await Task.Delay(delayBetweenMessages * 1000).ConfigureAwait(false);
                     }
                 }
 
-                // Allow future messages again after completion
                 _hasNotified.TryRemove(session.Id, out _);
             }
             catch
